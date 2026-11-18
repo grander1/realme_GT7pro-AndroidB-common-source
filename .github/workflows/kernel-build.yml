@@ -38,13 +38,17 @@ jobs:
       - name: Download clang r510928 + llvm-binutils
         run: |
           mkdir -p toolchain
-          cd toolchain
-          curl -sL -o clang-r510928.tar.gz \
-            "https://android.googlesource.com/platform/prebuilts/clang/host/linux-x86/+archive/refs/heads/main/clang-r510928.tar.gz"
-          tar -xzf clang-r510928.tar.gz
-          git clone --depth=1 https://android.googlesource.com/platform/prebuilts/llvm-binutils-stable binutils
-          cd ..
-          ls clang-r510928/bin/clang binutils/bin/ld.lld 2>/dev/null || true
+          # primary: chromium prebuilt (fast CDN); fallback: googlesource git archive
+          if curl -sfL -o /tmp/clang.tbz "https://commondatastorage.googleapis.com/chromium-browser-clang/Linux_x64/clang-r510928.tbz"; then
+            tar -xjf /tmp/clang.tbz -C toolchain
+          else
+            echo "chromium mirror miss, using googlesource archive endpoint"
+            curl -sfL "https://android.googlesource.com/platform/prebuilts/clang/host/linux-x86/+archive/refs/heads/main/clang-r510928.tar.gz" | tar -xz -C toolchain
+          fi
+          test -x toolchain/bin/clang || { echo FATAL no clang; exit 1; }
+          git clone --depth=1 https://android.googlesource.com/platform/prebuilts/llvm-binutils-stable toolchain/binutils
+          toolchain/bin/clang --version | head -1
+          ls toolchain/binutils/bin/ld.lld
 
       - name: Restore extracted defconfig
         run: |
@@ -59,7 +63,7 @@ jobs:
       - name: Configure
         working-directory: kernel
         run: |
-          CLANG=../toolchain/clang-r510928/bin/clang
+          CLANG=../toolchain/bin/clang
           BINUTILS=$(pwd)/../toolchain/binutils/bin
           if [ -f arch/arm64/configs/gt7pro_defconfig ]; then
             make ARCH=arm64 O=out gt7pro_defconfig CC=$CLANG LLVM=1 LLVM_BINUTILS=$BINUTILS
@@ -71,7 +75,7 @@ jobs:
         if: (inputs.build_mode == 'build') || (github.event_name == 'push')
         working-directory: kernel
         run: |
-          CLANG=../toolchain/clang-r510928/bin/clang
+          CLANG=../toolchain/bin/clang
           BINUTILS=$(pwd)/../toolchain/binutils/bin
           make ARCH=arm64 O=out -j$(nproc) CC=$CLANG LLVM=1 LLVM_BINUTILS=$BINUTILS Image Image.lz4 2>&1 | tail -100
           ls -la out/arch/arm64/boot/
